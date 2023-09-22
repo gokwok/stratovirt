@@ -11,40 +11,25 @@
 // See the Mulan PSL v2 for more details.
 
 //! The abstract layer that connects different frontend & backend camera devices.
-//! Backend devices, such as v4l2, usb, or demo device, etc., shall implement trait CameraHostdevOps.
+//! Backend devices, such as v4l2, usb, or demo device, etc., shall implement trait
+//! CameraBackend.
 
 pub mod demo;
+#[cfg(feature = "usb_camera_v4l2")]
 pub mod v4l2;
 
-use anyhow::{bail, Context, Result};
 use std::sync::{Arc, Mutex};
 
+use anyhow::{bail, Context, Result};
+
+use self::demo::DemoCameraBackend;
+#[cfg(feature = "usb_camera_v4l2")]
+use self::v4l2::V4l2CameraBackend;
 use machine_manager::config::{CamBackendType, ConfigError, UsbCameraConfig};
 use util::aio::Iovec;
 
-use self::{demo::DemoCamera, v4l2::V4l2CameraBackend};
-
 /// Frame interval in 100ns units.
 pub const INTERVALS_PER_SEC: u32 = 10_000_000;
-
-#[allow(dead_code)]
-#[derive(Default, Clone)]
-pub struct CamFmt {
-    // Basic 3 configurations: frame size, format, frame frequency.
-    basic_fmt: CamBasicFmt,
-    // Processing Unit Configuration: brightness, hue, etc.
-    pu_fmt: CamPUFmt,
-    // Camera Terminal Configuration: focus, exposure time, iris, etc.
-    lens_fmt: CamLensFmt,
-}
-
-impl CamFmt {
-    pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-}
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct CamBasicFmt {
@@ -61,24 +46,6 @@ impl CamBasicFmt {
         }
         Ok(INTERVALS_PER_SEC / self.fps)
     }
-}
-
-#[allow(dead_code)]
-#[derive(Default, Clone)]
-pub struct CamPUFmt {
-    bright: u64,
-    contrast: u64,
-    hue: u64,
-    saturatio: u64,
-    // TODO: to be extended.
-}
-
-#[allow(dead_code)]
-#[derive(Default, Clone)]
-pub struct CamLensFmt {
-    focus: u64,
-    zoom: u64,
-    // TODO: to be extended.
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default)]
@@ -138,7 +105,7 @@ pub type CameraNotifyCallback = Arc<dyn Fn() + Send + Sync>;
 /// Callback function which is called when backend is broken.
 pub type CameraBrokenCallback = Arc<dyn Fn() + Send + Sync>;
 
-pub trait CameraHostdevOps: Send + Sync {
+pub trait CameraBackend: Send + Sync {
     /// Set a specific format.
     fn set_fmt(&mut self, fmt: &CamBasicFmt) -> Result<()>;
 
@@ -176,8 +143,9 @@ pub trait CameraHostdevOps: Send + Sync {
     fn register_broken_cb(&mut self, cb: CameraBrokenCallback);
 }
 
-pub fn camera_ops(config: UsbCameraConfig) -> Result<Arc<Mutex<dyn CameraHostdevOps>>> {
-    let cam: Arc<Mutex<dyn CameraHostdevOps>> = match config.backend {
+pub fn create_cam_backend(config: UsbCameraConfig) -> Result<Arc<Mutex<dyn CameraBackend>>> {
+    let cam: Arc<Mutex<dyn CameraBackend>> = match config.backend {
+        #[cfg(feature = "usb_camera_v4l2")]
         CamBackendType::V4l2 => Arc::new(Mutex::new(V4l2CameraBackend::new(
             config.drive.id.clone().unwrap(),
             config.drive.path.clone().with_context(|| {
@@ -185,7 +153,7 @@ pub fn camera_ops(config: UsbCameraConfig) -> Result<Arc<Mutex<dyn CameraHostdev
             })?,
             config.iothread,
         )?)),
-        CamBackendType::Demo => Arc::new(Mutex::new(DemoCamera::new(
+        CamBackendType::Demo => Arc::new(Mutex::new(DemoCameraBackend::new(
             config.id.clone().unwrap(),
             config.path.with_context(|| {
                 ConfigError::FieldIsMissing("path".to_string(), "Demo".to_string())

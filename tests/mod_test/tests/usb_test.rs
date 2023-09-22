@@ -19,7 +19,7 @@ use devices::usb::xhci::xhci_regs::{
     XHCI_INTR_REG_ERSTBA_LO, XHCI_INTR_REG_ERSTSZ, XHCI_INTR_REG_IMAN, XHCI_OPER_NE_MASK,
     XHCI_OPER_REG_CONFIG, XHCI_OPER_REG_DNCTRL, XHCI_OPER_REG_USBCMD, XHCI_OPER_REG_USBSTS,
 };
-use devices::usb::xhci::{TRBCCode, TRBType, TRB_SIZE};
+use devices::usb::xhci::xhci_trb::{TRBCCode, TRBType, TRB_SIZE};
 use devices::usb::UsbDeviceRequest;
 use mod_test::libdriver::pci::{PCI_DEVICE_ID, PCI_VENDOR_ID};
 use mod_test::libdriver::usb::{
@@ -1917,7 +1917,7 @@ fn test_xhci_keyboard_device_init_device_request_repeat() {
         xhci.doorbell_write(slot_id, CONTROL_ENDPOINT_ID);
         let evt = xhci.fetch_event(PRIMARY_INTERRUPTER_ID).unwrap();
         assert_eq!(evt.ccode, TRBCCode::Success as u32);
-        //get protocol
+        // get protocol
         xhci.get_protocol(slot_id);
         xhci.doorbell_write(slot_id, CONTROL_ENDPOINT_ID);
         let evt = xhci.fetch_event(PRIMARY_INTERRUPTER_ID).unwrap();

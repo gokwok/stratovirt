@@ -127,7 +127,7 @@ impl<T: Clone + 'static> FileDriver<T> {
         self.process_request(OpCode::Preadv, req_list, completecb)
     }
 
-    pub fn complete_request(
+    fn complete_request(
         &mut self,
         opcode: OpCode,
         iovec: &[Iovec],
@@ -208,10 +208,6 @@ impl<T: Clone + 'static> FileDriver<T> {
             self.file.set_len(len)?;
         }
         Ok(())
-    }
-
-    pub fn meta_len(&self) -> Result<u64> {
-        Ok(self.file.metadata()?.len())
     }
 }
 

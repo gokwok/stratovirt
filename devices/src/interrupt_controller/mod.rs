@@ -25,21 +25,15 @@
 //! - `aarch64`
 
 #[allow(clippy::upper_case_acronyms)]
-#[cfg(target_arch = "aarch64")]
 mod aarch64;
 mod error;
 
-#[cfg(target_arch = "aarch64")]
-pub use aarch64::GICConfig as ICGICConfig;
-#[cfg(target_arch = "aarch64")]
-pub use aarch64::GICv2Config as ICGICv2Config;
-#[cfg(target_arch = "aarch64")]
-pub use aarch64::GICv3Config as ICGICv3Config;
-#[cfg(target_arch = "aarch64")]
-pub use aarch64::InterruptController;
-#[cfg(target_arch = "aarch64")]
-pub use aarch64::GIC_IRQ_INTERNAL;
-#[cfg(target_arch = "aarch64")]
-pub use aarch64::GIC_IRQ_MAX;
 pub use anyhow::Result;
+
+pub use aarch64::GICConfig as ICGICConfig;
+pub use aarch64::GICv2Config as ICGICv2Config;
+pub use aarch64::GICv3Config as ICGICv3Config;
+pub use aarch64::InterruptController;
+pub use aarch64::GIC_IRQ_INTERNAL;
+pub use aarch64::GIC_IRQ_MAX;
 pub use error::InterruptError;

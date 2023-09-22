@@ -1,6 +1,6 @@
 [package]
 name = "cpu"
-version = "2.2.0"
+version = "2.3.0"
 authors = ["Huawei StratoVirt Team"]
 edition = "2021"
 license = "Mulan PSL v2"
@@ -19,9 +19,6 @@ machine_manager = { path = "../machine_manager" }
 migration = { path = "../migration" }
 migration_derive = { path = "../migration/migration_derive" }
 util = { path = "../util" }
-
-[dev-dependencies]
-serial_test = "2.0.0"
 
 [features]
 default = []

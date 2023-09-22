@@ -21,21 +21,18 @@ use anyhow::{bail, Context, Result};
 use byteorder::{ByteOrder, LittleEndian};
 use log::{debug, error, info, warn};
 
-use address_space::{AddressSpace, GuestAddress};
-use machine_manager::config::XhciConfig;
-use machine_manager::event_loop::EventLoop;
-
 use super::xhci_regs::{XhciInterrupter, XhciOperReg};
 use super::xhci_ring::{XhciCommandRing, XhciEventRingSeg, XhciTRB, XhciTransferRing};
-use super::{
+use super::xhci_trb::{
     TRBCCode, TRBType, SETUP_TRB_TR_LEN, TRB_EV_ED, TRB_TR_DIR, TRB_TR_FRAMEID_MASK,
     TRB_TR_FRAMEID_SHIFT, TRB_TR_IDT, TRB_TR_IOC, TRB_TR_ISP, TRB_TR_LEN_MASK, TRB_TR_SIA,
     TRB_TYPE_SHIFT,
 };
 use crate::usb::{config::*, TransferOps};
-use crate::usb::{
-    UsbDeviceOps, UsbDeviceRequest, UsbEndpoint, UsbError, UsbPacket, UsbPacketStatus,
-};
+use crate::usb::{UsbDevice, UsbDeviceRequest, UsbEndpoint, UsbError, UsbPacket, UsbPacketStatus};
+use address_space::{AddressSpace, GuestAddress};
+use machine_manager::config::XhciConfig;
+use machine_manager::event_loop::EventLoop;
 
 const INVALID_SLOT_ID: u32 = 0;
 pub const MAX_INTRS: u32 = 1;
@@ -244,7 +241,8 @@ impl XhciTransfer {
     }
 
     fn report_transfer_error(&mut self) -> Result<()> {
-        // An error occurs in the transfer. The transfer is set to the completed and will not be retried.
+        // An error occurs in the transfer. The transfer is set to the completed and will not be
+        // retried.
         self.complete = true;
         let mut evt = XhciEvent::new(TRBType::ErTransfer, TRBCCode::TrbError);
         evt.slot_id = self.slotid as u8;
@@ -461,7 +459,7 @@ pub struct UsbPort {
     /// Port ID
     pub port_id: u8,
     pub speed_mask: u32,
-    pub dev: Option<Arc<Mutex<dyn UsbDeviceOps>>>,
+    pub dev: Option<Arc<Mutex<dyn UsbDevice>>>,
     pub used: bool,
     pub slot_id: u32,
 }
@@ -1163,7 +1161,7 @@ impl XhciDevice {
     }
 
     /// Send SET_ADDRESS request to usb device.
-    fn set_device_address(&mut self, dev: &Arc<Mutex<dyn UsbDeviceOps>>, addr: u32) {
+    fn set_device_address(&mut self, dev: &Arc<Mutex<dyn UsbDevice>>, addr: u32) {
         let mut locked_dev = dev.lock().unwrap();
         let device_req = UsbDeviceRequest {
             request_type: USB_DEVICE_OUT_REQUEST,
@@ -1383,12 +1381,13 @@ impl XhciDevice {
         let mut ep_ctx = XhciEpCtx::default();
         dma_read_u32(
             &self.mem_space,
-            // It is safe to use plus here becuase we previously verify the address on the outer layer.
+            // It is safe to use plus here becuase we previously verify the address on the outer
+            // layer.
             GuestAddress(input_ctx + EP_INPUT_CTX_OFFSET + entry_offset),
             ep_ctx.as_mut_dwords(),
         )?;
         self.disable_endpoint(slot_id, ep_id)?;
-        let mut epctx = &mut self.slots[(slot_id - 1) as usize].endpoints[(ep_id - 1) as usize];
+        let epctx = &mut self.slots[(slot_id - 1) as usize].endpoints[(ep_id - 1) as usize];
         epctx.epid = ep_id;
         epctx.enabled = true;
         // It is safe to use plus here becuase we previously verify the address on the outer layer.
@@ -1398,7 +1397,8 @@ impl XhciDevice {
         ep_ctx.ep_info |= EP_RUNNING;
         dma_write_u32(
             &self.mem_space,
-            // It is safe to use plus here becuase we previously verify the address on the outer layer.
+            // It is safe to use plus here becuase we previously verify the address on the outer
+            // layer.
             GuestAddress(output_ctx + EP_CTX_OFFSET + entry_offset),
             ep_ctx.as_dwords(),
         )?;
@@ -1616,7 +1616,7 @@ impl XhciDevice {
             let mut locked_xfer = xfer.lock().unwrap();
             locked_xfer.packet = packet;
             self.endpoint_do_transfer(&mut locked_xfer)?;
-            let mut epctx = &mut self.slots[(slot_id - 1) as usize].endpoints[(ep_id - 1) as usize];
+            let epctx = &mut self.slots[(slot_id - 1) as usize].endpoints[(ep_id - 1) as usize];
             if locked_xfer.complete {
                 epctx.update_dequeue(&self.mem_space, None)?;
             } else {
@@ -1916,7 +1916,7 @@ impl XhciDevice {
         Ok(Arc::new(Mutex::new(packet)))
     }
 
-    fn get_usb_dev(&self, slotid: u32, epid: u32) -> Result<Arc<Mutex<dyn UsbDeviceOps>>> {
+    fn get_usb_dev(&self, slotid: u32, epid: u32) -> Result<Arc<Mutex<dyn UsbDevice>>> {
         let port = self.slots[(slotid - 1) as usize]
             .usb_port
             .as_ref()
@@ -2007,11 +2007,14 @@ impl XhciDevice {
 
     /// Used for device to wakeup endpoint
     pub fn wakeup_endpoint(&mut self, slot_id: u32, ep: &UsbEndpoint) -> Result<()> {
-        if slot_id == INVALID_SLOT_ID {
-            debug!("Invalid slot id, maybe device not activated.");
+        let ep_id = endpoint_number_to_id(ep.in_direction, ep.ep_number);
+        if let Err(e) = self.get_endpoint_ctx(slot_id, ep_id as u32) {
+            debug!(
+                "Invalid slot id or ep id, maybe device not activated, {:?}",
+                e
+            );
             return Ok(());
         }
-        let ep_id = endpoint_number_to_id(ep.in_direction, ep.ep_number);
         self.kick_endpoint(slot_id, ep_id as u32)?;
         Ok(())
     }
@@ -2038,7 +2041,7 @@ impl XhciDevice {
     /// Assign USB port and attach the device.
     pub fn assign_usb_port(
         &mut self,
-        dev: &Arc<Mutex<dyn UsbDeviceOps>>,
+        dev: &Arc<Mutex<dyn UsbDevice>>,
     ) -> Option<Arc<Mutex<UsbPort>>> {
         let speed = dev.lock().unwrap().speed();
         for port in &self.usb_ports {
@@ -2133,7 +2136,7 @@ pub fn dma_read_u32(
     addr: GuestAddress,
     buf: &mut [u32],
 ) -> Result<()> {
-    let vec_len = size_of::<u32>() * buf.len();
+    let vec_len = std::mem::size_of_val(buf);
     let mut vec = vec![0_u8; vec_len];
     let tmp = vec.as_mut_slice();
     dma_read_bytes(addr_space, addr, tmp)?;
@@ -2148,7 +2151,7 @@ pub fn dma_write_u32(
     addr: GuestAddress,
     buf: &[u32],
 ) -> Result<()> {
-    let vec_len = size_of::<u32>() * buf.len();
+    let vec_len = std::mem::size_of_val(buf);
     let mut vec = vec![0_u8; vec_len];
     let tmp = vec.as_mut_slice();
     for i in 0..buf.len() {
